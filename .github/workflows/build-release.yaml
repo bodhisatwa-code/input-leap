@@ -1,0 +1,264 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 3.0.3)'
+        required: false
+        default: ''
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  linux-build:
+    name: Linux Build
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update -y
+          apt-get install -y \
+              cmake \
+              g++ \
+              git \
+              libavahi-compat-libdnssd-dev \
+              libgtest-dev \
+              libgl-dev \
+              libgmock-dev \
+              libice-dev \
+              libsm-dev \
+              libssl-dev \
+              libxinerama-dev \
+              libxrandr-dev \
+              libxtst-dev \
+              libxkbcommon-dev \
+              libglib2.0-dev \
+              ninja-build \
+              qt6-base-dev \
+              qt6-l10n-tools \
+              qt6-tools-dev-tools \
+              qt6-tools-dev \
+              dpkg-dev \
+              fakeroot \
+              file
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake
+        run: |
+          cmake -G Ninja -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_UNITY_BUILD=1 \
+            -DINPUTLEAP_BUILD_GUI=OFF \
+            -DINPUTLEAP_BUILD_TESTS=OFF \
+            -DQT_DEFAULT_MAJOR_VERSION=6 \
+            -DINPUTLEAP_VERSION_DESC=release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build client and server
+        run: |
+          cmake --build build --target input-leapc --parallel
+          cmake --build build --target input-leaps --parallel
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(grep -oP 'INPUTLEAP_VERSION_MAJOR \K[0-9]+' cmake/Version.cmake).$(grep -oP 'INPUTLEAP_VERSION_MINOR \K[0-9]+' cmake/Version.cmake).$(grep -oP 'INPUTLEAP_VERSION_PATCH \K[0-9]+' cmake/Version.cmake)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create client DEB package
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          PKG_DIR=input-leap-client_${VERSION}_amd64
+
+          mkdir -p ${PKG_DIR}/DEBIAN
+          mkdir -p ${PKG_DIR}/usr/bin
+          mkdir -p ${PKG_DIR}/usr/share/doc/input-leap-client
+
+          # Copy client binary
+          cp build/bin/input-leapc ${PKG_DIR}/usr/bin/
+
+          # Create control file
+          cat > ${PKG_DIR}/DEBIAN/control << EOF
+          Package: input-leap-client
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Depends: libssl3, libx11-6, libxtst6, libxinerama1, libxrandr2, libice6, libsm6, libavahi-compat-libdnssd1
+          Maintainer: Input Leap Team <inputleap@github.com>
+          Description: Input Leap Client - Share keyboard and mouse across computers
+           Input Leap client component that receives input from a server.
+           This allows controlling this computer from another computer
+           running the Input Leap server.
+          Homepage: https://github.com/input-leap/input-leap
+          EOF
+
+          # Remove leading spaces from control file
+          sed -i 's/^          //' ${PKG_DIR}/DEBIAN/control
+
+          # Create copyright file
+          cp LICENSE ${PKG_DIR}/usr/share/doc/input-leap-client/copyright
+
+          # Set permissions
+          chmod 755 ${PKG_DIR}/usr/bin/input-leapc
+
+          # Build package
+          dpkg-deb --build ${PKG_DIR}
+          mv ${PKG_DIR}.deb input-leap-client.deb
+
+      - name: Create server DEB package
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          PKG_DIR=input-leap-server_${VERSION}_amd64
+
+          mkdir -p ${PKG_DIR}/DEBIAN
+          mkdir -p ${PKG_DIR}/usr/bin
+          mkdir -p ${PKG_DIR}/usr/share/doc/input-leap-server
+
+          # Copy server binary
+          cp build/bin/input-leaps ${PKG_DIR}/usr/bin/
+
+          # Create control file
+          cat > ${PKG_DIR}/DEBIAN/control << EOF
+          Package: input-leap-server
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Depends: libssl3, libx11-6, libxtst6, libxinerama1, libxrandr2, libice6, libsm6, libavahi-compat-libdnssd1
+          Maintainer: Input Leap Team <inputleap@github.com>
+          Description: Input Leap Server - Share keyboard and mouse across computers
+           Input Leap server component that shares keyboard and mouse input.
+           Run this on the computer with the keyboard and mouse you want to share.
+          Homepage: https://github.com/input-leap/input-leap
+          EOF
+
+          # Remove leading spaces from control file
+          sed -i 's/^          //' ${PKG_DIR}/DEBIAN/control
+
+          # Create copyright file
+          cp LICENSE ${PKG_DIR}/usr/share/doc/input-leap-server/copyright
+
+          # Set permissions
+          chmod 755 ${PKG_DIR}/usr/bin/input-leaps
+
+          # Build package
+          dpkg-deb --build ${PKG_DIR}
+          mv ${PKG_DIR}.deb input-leap-server.deb
+
+      - name: Verify packages
+        run: |
+          dpkg-deb --info input-leap-client.deb
+          dpkg-deb --contents input-leap-client.deb
+          echo "---"
+          dpkg-deb --info input-leap-server.deb
+          dpkg-deb --contents input-leap-server.deb
+
+      - name: Upload client DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: input-leap-client-linux
+          path: input-leap-client.deb
+          if-no-files-found: error
+
+      - name: Upload server DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: input-leap-server-linux
+          path: input-leap-server.deb
+          if-no-files-found: error
+
+  windows-build:
+    name: Windows Build
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download Bonjour SDK
+        id: bonjour
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -Force -ItemType Directory -Path .\deps
+
+          Invoke-WebRequest 'https://github.com/nelsonjchen/mDNSResponder/releases/download/v2019.05.08.1/x64_RelWithDebInfo.zip' -OutFile 'deps\BonjourSDKLike.zip'
+          Expand-Archive .\deps\BonjourSDKLike.zip -DestinationPath .\deps\BonjourSDKLike
+          Remove-Item deps\BonjourSDKLike.zip
+
+          "path=$env:GITHUB_WORKSPACE\deps\BonjourSDKLike" >> $env:GITHUB_OUTPUT
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.6
+          cache: true
+          cache-key-prefix: windows-Qt6.6
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DQT_DEFAULT_MAJOR_VERSION=6 `
+            -DINPUTLEAP_BUILD_GUI=OFF `
+            -DINPUTLEAP_BUILD_TESTS=OFF `
+            -DINPUTLEAP_VERSION_DESC=release `
+            -DDNSSD_LIB="$env:BONJOUR_SDK_HOME\Lib\x64\dnssd.lib"
+        env:
+          BONJOUR_SDK_HOME: ${{ steps.bonjour.outputs.path }}
+
+      - name: Build client
+        run: cmake --build build --config Release --target input-leapc
+
+      - name: Build server
+        run: cmake --build build --config Release --target input-leaps
+
+      - name: Prepare client artifact
+        run: |
+          New-Item -ItemType Directory -Force -Path client-artifact
+          Copy-Item build\bin\Release\input-leapc.exe -Destination client-artifact\input-leap-client.exe
+          # dnssd.dll is required for Bonjour/mDNS auto-discovery
+          Copy-Item "${{ steps.bonjour.outputs.path }}\Lib\x64\dnssd.dll" -Destination client-artifact\
+
+      - name: Prepare server artifact
+        run: |
+          New-Item -ItemType Directory -Force -Path server-artifact
+          Copy-Item build\bin\Release\input-leaps.exe -Destination server-artifact\input-leap-server.exe
+          # dnssd.dll is required for Bonjour/mDNS auto-discovery
+          Copy-Item "${{ steps.bonjour.outputs.path }}\Lib\x64\dnssd.dll" -Destination server-artifact\
+
+      - name: List artifacts
+        run: |
+          Write-Host "=== Client ==="
+          Get-ChildItem -Path client-artifact
+          Write-Host "=== Server ==="
+          Get-ChildItem -Path server-artifact
+
+      - name: Upload Windows client (exe + dnssd.dll)
+        uses: actions/upload-artifact@v4
+        with:
+          name: input-leap-client-windows
+          path: client-artifact/
+          if-no-files-found: error
+
+      - name: Upload Windows server (exe + dnssd.dll)
+        uses: actions/upload-artifact@v4
+        with:
+          name: input-leap-server-windows
+          path: server-artifact/
+          if-no-files-found: error
