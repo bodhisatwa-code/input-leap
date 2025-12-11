@@ -201,6 +201,20 @@ jobs:
           Expand-Archive .\deps\BonjourSDKLike.zip -DestinationPath .\deps\BonjourSDKLike
           Remove-Item deps\BonjourSDKLike.zip
 
+          # Find the actual paths
+          Write-Host "=== Bonjour SDK contents ==="
+          Get-ChildItem -Path .\deps\BonjourSDKLike -Recurse
+
+          # Find dnssd.dll location
+          $dnssdDll = Get-ChildItem -Path .\deps\BonjourSDKLike -Recurse -Filter "dnssd.dll" | Select-Object -First 1
+          Write-Host "Found dnssd.dll at: $($dnssdDll.FullName)"
+          "dll_path=$($dnssdDll.FullName)" >> $env:GITHUB_OUTPUT
+
+          # Find dnssd.lib location
+          $dnssdLib = Get-ChildItem -Path .\deps\BonjourSDKLike -Recurse -Filter "dnssd.lib" | Select-Object -First 1
+          Write-Host "Found dnssd.lib at: $($dnssdLib.FullName)"
+          "lib_path=$($dnssdLib.FullName)" >> $env:GITHUB_OUTPUT
+
           "path=$env:GITHUB_WORKSPACE\deps\BonjourSDKLike" >> $env:GITHUB_OUTPUT
 
       - name: Install Qt
@@ -218,9 +232,7 @@ jobs:
             -DINPUTLEAP_BUILD_GUI=OFF `
             -DINPUTLEAP_BUILD_TESTS=OFF `
             -DINPUTLEAP_VERSION_DESC=release `
-            -DDNSSD_LIB="$env:BONJOUR_SDK_HOME\Lib\x64\dnssd.lib"
-        env:
-          BONJOUR_SDK_HOME: ${{ steps.bonjour.outputs.path }}
+            -DDNSSD_LIB="${{ steps.bonjour.outputs.lib_path }}"
 
       - name: Build client
         run: cmake --build build --config Release --target input-leapc
@@ -233,14 +245,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path client-artifact
           Copy-Item build\bin\Release\input-leapc.exe -Destination client-artifact\input-leap-client.exe
           # dnssd.dll is required for Bonjour/mDNS auto-discovery
-          Copy-Item "${{ steps.bonjour.outputs.path }}\Lib\x64\dnssd.dll" -Destination client-artifact\
+          Copy-Item "${{ steps.bonjour.outputs.dll_path }}" -Destination client-artifact\
 
       - name: Prepare server artifact
         run: |
           New-Item -ItemType Directory -Force -Path server-artifact
           Copy-Item build\bin\Release\input-leaps.exe -Destination server-artifact\input-leap-server.exe
           # dnssd.dll is required for Bonjour/mDNS auto-discovery
-          Copy-Item "${{ steps.bonjour.outputs.path }}\Lib\x64\dnssd.dll" -Destination server-artifact\
+          Copy-Item "${{ steps.bonjour.outputs.dll_path }}" -Destination server-artifact\
 
       - name: List artifacts
         run: |
