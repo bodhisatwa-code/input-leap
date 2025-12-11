@@ -191,48 +191,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download Bonjour SDK
-        id: bonjour
-        run: |
-          $ErrorActionPreference = "Stop"
-          New-Item -Force -ItemType Directory -Path .\deps
-
-          Invoke-WebRequest 'https://github.com/nelsonjchen/mDNSResponder/releases/download/v2019.05.08.1/x64_RelWithDebInfo.zip' -OutFile 'deps\BonjourSDKLike.zip'
-          Expand-Archive .\deps\BonjourSDKLike.zip -DestinationPath .\deps\BonjourSDKLike
-          Remove-Item deps\BonjourSDKLike.zip
-
-          # Find the actual paths
-          Write-Host "=== Bonjour SDK contents ==="
-          Get-ChildItem -Path .\deps\BonjourSDKLike -Recurse
-
-          # Find dnssd.dll location
-          $dnssdDll = Get-ChildItem -Path .\deps\BonjourSDKLike -Recurse -Filter "dnssd.dll" | Select-Object -First 1
-          Write-Host "Found dnssd.dll at: $($dnssdDll.FullName)"
-          "dll_path=$($dnssdDll.FullName)" >> $env:GITHUB_OUTPUT
-
-          # Find dnssd.lib location
-          $dnssdLib = Get-ChildItem -Path .\deps\BonjourSDKLike -Recurse -Filter "dnssd.lib" | Select-Object -First 1
-          Write-Host "Found dnssd.lib at: $($dnssdLib.FullName)"
-          "lib_path=$($dnssdLib.FullName)" >> $env:GITHUB_OUTPUT
-
-          "path=$env:GITHUB_WORKSPACE\deps\BonjourSDKLike" >> $env:GITHUB_OUTPUT
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: 6.6
-          cache: true
-          cache-key-prefix: windows-Qt6.6
-
       - name: Configure CMake
         run: |
+          # Note: Bonjour SDK not needed - GUI is disabled, CLI tools connect via IP directly
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
-            -DQT_DEFAULT_MAJOR_VERSION=6 `
             -DINPUTLEAP_BUILD_GUI=OFF `
             -DINPUTLEAP_BUILD_TESTS=OFF `
-            -DINPUTLEAP_VERSION_DESC=release `
-            -DDNSSD_LIB="${{ steps.bonjour.outputs.lib_path }}"
+            -DINPUTLEAP_VERSION_DESC=release
 
       - name: Build client
         run: cmake --build build --config Release --target input-leapc
@@ -240,37 +206,22 @@ jobs:
       - name: Build server
         run: cmake --build build --config Release --target input-leaps
 
-      - name: Prepare client artifact
+      - name: List build output
         run: |
-          New-Item -ItemType Directory -Force -Path client-artifact
-          Copy-Item build\bin\Release\input-leapc.exe -Destination client-artifact\input-leap-client.exe
-          # dnssd.dll is required for Bonjour/mDNS auto-discovery
-          Copy-Item "${{ steps.bonjour.outputs.dll_path }}" -Destination client-artifact\
+          Write-Host "=== Build bin directory ==="
+          Get-ChildItem -Path build\bin\Release -ErrorAction SilentlyContinue
+          Get-ChildItem -Path build\bin -ErrorAction SilentlyContinue
 
-      - name: Prepare server artifact
-        run: |
-          New-Item -ItemType Directory -Force -Path server-artifact
-          Copy-Item build\bin\Release\input-leaps.exe -Destination server-artifact\input-leap-server.exe
-          # dnssd.dll is required for Bonjour/mDNS auto-discovery
-          Copy-Item "${{ steps.bonjour.outputs.dll_path }}" -Destination server-artifact\
-
-      - name: List artifacts
-        run: |
-          Write-Host "=== Client ==="
-          Get-ChildItem -Path client-artifact
-          Write-Host "=== Server ==="
-          Get-ChildItem -Path server-artifact
-
-      - name: Upload Windows client (exe + dnssd.dll)
+      - name: Upload Windows client
         uses: actions/upload-artifact@v4
         with:
           name: input-leap-client-windows
-          path: client-artifact/
+          path: build/bin/Release/input-leapc.exe
           if-no-files-found: error
 
-      - name: Upload Windows server (exe + dnssd.dll)
+      - name: Upload Windows server
         uses: actions/upload-artifact@v4
         with:
           name: input-leap-server-windows
-          path: server-artifact/
+          path: build/bin/Release/input-leaps.exe
           if-no-files-found: error
